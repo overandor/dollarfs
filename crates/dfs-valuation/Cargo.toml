@@ -1,0 +1,16 @@
+[package]
+name = "dfs-valuation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+dfs-core = { path = "../dfs-core" }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+regex = { workspace = true }
+rusqlite = { workspace = true }

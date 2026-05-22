@@ -1,0 +1,4 @@
+/target/
+*.dmg
+lfv.app
+.DS_Store
