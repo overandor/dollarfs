@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head><title>DollarFS Demo</title></head>
+<body>
+<h1>DollarFS Demo</h1>
+<button onclick="scanFiles()">Scan Files</button>
+<button onclick="calculateValue()">Calculate Value</button>
+<div id="stats"></div>
+<div id="log"></div>
+<script>
+let files = [];
+let totalValue = 0;
+function scanFiles() {
+  for(let i=0; i<10; i++) {
+    files.push({name: `file${i}.rs`, hash: 'abc123', value: Math.random() * 100});
+  }
+  updateStats();
+  log(`Scanned ${files.length} files`);
+}
+function calculateValue() {
+  totalValue = files.reduce((sum, f) => sum + f.value, 0);
+  log(`Total estimated value: $${totalValue.toFixed(2)}`);
+}
+function updateStats() {
+  document.getElementById('stats').innerHTML = `Files: ${files.length} | Value: $${totalValue.toFixed(2)}`;
+}
+function log(msg) {
+  document.getElementById('log').innerHTML += `<div>${msg}</div>`;
+}
+</script>
+</body>
+</html>

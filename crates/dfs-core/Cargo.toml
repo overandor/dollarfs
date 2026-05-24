@@ -19,3 +19,4 @@ tracing = { workspace = true }
 dirs = { workspace = true }
 notify = { workspace = true }
 reqwest = { workspace = true }
+tokio = { workspace = true }

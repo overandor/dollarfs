@@ -45,4 +45,39 @@ Tests run:
   - lfv doctor: all 11 tables pass
 Result: v0.2 definition of done satisfied
 Risks: lfv watch not manually tested interactively; TUI remains v0.1 minimal
-Next action: v0.3 — macOS native integration, work session tracking, LLM attribution, TUI polish
+
+## 2026-05-22 — v0.3 Complete (LLM 24/7 Integration)
+
+Status: Complete
+Files changed:
+  - Cargo.toml (added reqwest dependency)
+  - crates/dfs-core/Cargo.toml (added reqwest, tokio)
+  - crates/dfs-core/src/lib.rs (export llm, agent modules)
+  - crates/dfs-core/src/db.rs (LLM settings defaults)
+  - crates/dfs-core/src/llm.rs (new — OpenAI-compatible LLM client)
+  - crates/dfs-core/src/agent.rs (new — 24/7 agent loop + one-shot analyze)
+  - crates/dfs-cli/src/main.rs (agent, analyze, llm-config commands, version 0.3.0)
+  - crates/dfs-cli/src/dashboard.rs (fixed serialization error)
+  - macos/build_dmg.sh (version 0.3.0)
+What was built:
+  - LLM client supporting OpenAI-compatible APIs (Ollama, LM Studio, OpenAI)
+  - `lfv llm-config` — configure endpoint, model, API key, enable/disable
+  - `lfv analyze <path>` — one-shot LLM analysis (value, attribution, security, evidence)
+  - `lfv agent --interval <secs>` — 24/7 continuous file analysis daemon
+  - LLM attribution tracking (human / ai-generated / mixed)
+  - Evidence card generation from LLM analysis
+  - Deep security scan via LLM (complements regex scanner)
+  - Automatic storing of agent events in file_events table
+  - Graceful degradation when LLM is disabled or unreachable
+Tests run:
+  - cargo build: clean
+  - lfv llm-config: displays current settings
+  - lfv llm-config --enable/--disable: toggles correctly
+  - lfv analyze ./fixtures/app.py (disabled): prints helpful message
+  - lfv analyze ./fixtures/app.py (enabled, no model): fails gracefully with 404
+  - lfv agent --interval 5 (enabled, no model): ping check fails gracefully
+  - lfv status: shows version 0.3.0
+  - DMG rebuild: successful
+Result: v0.3 LLM integration satisfied
+Risks: Requires local Ollama or compatible endpoint for full functionality
+Next action: v0.4 — Dashboard server, work session tracking, enhanced TUI

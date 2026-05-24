@@ -1,3 +1,4 @@
+mod dashboard;
 mod tui;
 
 use anyhow::Result;
@@ -12,7 +13,7 @@ use tracing::{info, warn};
 #[derive(Parser)]
 #[command(name = "lfv")]
 #[command(about = "lfv — local-first macOS file-value terminal")]
-#[command(version = "0.2.0")]
+#[command(version = "0.3.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -95,6 +96,11 @@ enum Commands {
     Tui,
     /// Show system status
     Status,
+    /// Start web dashboard server
+    Dashboard {
+        #[arg(short, long, default_value = "8080", help = "Port to listen on")]
+        port: u16,
+    },
     /// Run diagnostics
     Doctor,
 }
@@ -127,12 +133,13 @@ async fn main() -> Result<()> {
         }
         Commands::Tui => cmd_tui().await,
         Commands::Status => cmd_status(cli.config).await,
+        Commands::Dashboard { port } => cmd_dashboard(cli.config, port).await,
         Commands::Doctor => cmd_doctor(cli.config).await,
     }
 }
 
 async fn cmd_init(config: Option<PathBuf>) -> Result<()> {
-    println!("lfv v0.2.0 — Initializing...");
+    println!("lfv v0.3.0 — Initializing...");
     let dfs = DollarFs::init(config)?;
     println!("  Config directory: {}", dfs.config_dir.display());
     println!("  Database: {}", dfs.db_path.display());
@@ -423,6 +430,11 @@ async fn cmd_llm_config(
     Ok(())
 }
 
+async fn cmd_dashboard(config: Option<PathBuf>, port: u16) -> Result<()> {
+    let dfs = DollarFs::init(config)?;
+    dashboard::run_dashboard(dfs.db_path, dfs.config_dir, port).await
+}
+
 async fn cmd_export(
     config: Option<PathBuf>,
     format: &str,
@@ -610,7 +622,7 @@ async fn cmd_status(config: Option<PathBuf>) -> Result<()> {
     println!("  Files:        {}", file_count);
     println!("  Book value:   ${:.2}", total_value);
     println!("  Securities:   {}", sec_count);
-    println!("  Version:      0.2.0");
+    println!("  Version:      0.3.0");
     Ok(())
 }
 

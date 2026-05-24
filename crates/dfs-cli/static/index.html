@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lfv — Membra Operations Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>lfv Membra Dashboard</h1>
+    <div class="subtitle">Agent Operations Overseer &mdash; <span id="clock">--:--:--</span></div>
+  </header>
+
+  <section class="stats">
+    <div class="card" id="card-files">
+      <div class="value" id="stat-files">--</div>
+      <div class="label">Files Indexed</div>
+    </div>
+    <div class="card" id="card-value">
+      <div class="value" id="stat-value">--</div>
+      <div class="label">Book Value</div>
+    </div>
+    <div class="card" id="card-security">
+      <div class="value" id="stat-security">--</div>
+      <div class="label">Security Findings</div>
+    </div>
+    <div class="card" id="card-ledger">
+      <div class="value" id="stat-ledger">--</div>
+      <div class="label">Ledger Height</div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="panel wide">
+      <h2>Top Valuable Files</h2>
+      <div id="top-table" class="table-wrap">Loading...</div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Security Findings</h2>
+      <div id="security-table" class="table-wrap">Loading...</div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Membra Ledger Explorer</h2>
+      <div id="ledger-table" class="table-wrap">Loading...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Recent File Events</h2>
+      <div id="events-table" class="table-wrap">Loading...</div>
+    </section>
+
+    <section class="panel">
+      <h2>Recent Files</h2>
+      <div id="files-table" class="table-wrap">Loading...</div>
+    </section>
+
+    <section class="panel wide">
+      <h2>Git History</h2>
+      <div id="commits-panel">
+        <select id="repo-select"><option value="">Select directory...</option></select>
+        <div id="commits-table" class="table-wrap">Select a directory above.</div>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    lfv Membra Network &bull; Local Ledger &bull; Proprietary
+  </footer>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

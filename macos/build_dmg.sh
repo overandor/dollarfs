@@ -6,7 +6,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/target/release"
 APP_NAME="lfv.app"
 APP_BUNDLE="$PROJECT_DIR/$APP_NAME"
-DMG_NAME="lfv-0.2.0-macos.dmg"
+DMG_NAME="lfv-0.3.0-macos.dmg"
 VOL_NAME="lfv Installer"
 TMP_MOUNT="/tmp/lfv-dmg-$$"
 
