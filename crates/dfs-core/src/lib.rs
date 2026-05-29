@@ -28,10 +28,7 @@ impl DollarFs {
         let mut conn = db::init_db(&db_path)?;
         db::ensure_settings(&mut conn)?;
 
-        Ok(Self {
-            db_path,
-            config_dir,
-        })
+        Ok(Self { db_path, config_dir })
     }
 
     pub fn open_db(&self) -> Result<Connection> {
@@ -41,7 +38,7 @@ impl DollarFs {
 
 pub fn default_watched_dirs() -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
-    ["Desktop", "Documents", "Downloads", "Developer", "Projects", "Code"]
+    ["Desktop", "Documents", "Developer", "Projects", "Code"]
         .iter()
         .map(|d| home.join(d))
         .collect()
