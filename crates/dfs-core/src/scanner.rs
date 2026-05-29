@@ -1,13 +1,13 @@
 use anyhow::Result;
 use blake3::Hasher;
 use rusqlite::{params, Connection};
+use std::io::Read;
 use std::path::Path;
 use walkdir::WalkDir;
 
 pub const DEFAULT_WATCHED: &[&str] = &[
     "Desktop",
     "Documents",
-    "Downloads",
     "Developer",
     "Projects",
     "Code",
@@ -70,6 +70,20 @@ pub fn is_excluded(path: &Path, excluded: &[&str]) -> bool {
     false
 }
 
+fn blake3_file(path: &Path) -> Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Hasher::new();
+    let mut buf = [0u8; 1024 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
 pub fn scan_path(conn: &mut Connection, root: &Path) -> Result<usize> {
     scan_path_incremental(conn, root, false)
 }
@@ -107,9 +121,7 @@ pub fn scan_path_incremental(
 
         match index_file(&tx, path) {
             Ok(_) => count += 1,
-            Err(e) => {
-                eprintln!("warn: failed to index {}: {}", path.display(), e);
-            }
+            Err(e) => eprintln!("warn: failed to index {}: {}", path.display(), e),
         }
     }
 
@@ -180,11 +192,7 @@ pub fn detect_duplicates(conn: &mut Connection) -> Result<usize> {
 pub fn index_file(tx: &rusqlite::Transaction, path: &Path) -> Result<()> {
     let metadata = std::fs::metadata(path)?;
     let size = metadata.len() as i64;
-
-    let mut hasher = Hasher::new();
-    let data = std::fs::read(path)?;
-    hasher.update(&data);
-    let hash = hasher.finalize().to_hex().to_string();
+    let hash = blake3_file(path)?;
 
     let extension = path
         .extension()
