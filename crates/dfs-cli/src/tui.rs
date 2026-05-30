@@ -147,7 +147,7 @@ fn draw_ui(frame: &mut Frame, app: &mut AppState) {
             Constraint::Min(5),
             Constraint::Length(3),
         ])
-        .split(frame.size());
+        .split(frame.area());
 
     let header = Block::default()
         .borders(Borders::BOTTOM)
@@ -159,7 +159,7 @@ fn draw_ui(frame: &mut Frame, app: &mut AppState) {
     let stats_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(33), Constraint::Percentage(33), Constraint::Percentage(34)])
-        .split(main_layout[0].inner(&Margin::new(1, 1)));
+        .split(main_layout[0].inner(Margin::new(1, 1)));
 
     let stat_style = Style::default().fg(Color::White);
     let label_style = Style::default().fg(Color::Gray);
@@ -230,7 +230,7 @@ fn draw_top_files_table(frame: &mut Frame, area: ratatui::layout::Rect, app: &mu
     ])
     .header(header)
     .block(table_block)
-    .highlight_style(Style::default().bg(Color::Rgb(30, 30, 30)).add_modifier(Modifier::BOLD))
+    .row_highlight_style(Style::default().bg(Color::Rgb(30, 30, 30)).add_modifier(Modifier::BOLD))
     .highlight_symbol(">> ");
 
     frame.render_stateful_widget(table, area, &mut app.table_state);
@@ -273,7 +273,7 @@ fn draw_security_table(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut
     ])
     .header(header)
     .block(table_block)
-    .highlight_style(Style::default().bg(Color::Rgb(30, 30, 30)).add_modifier(Modifier::BOLD))
+    .row_highlight_style(Style::default().bg(Color::Rgb(30, 30, 30)).add_modifier(Modifier::BOLD))
     .highlight_symbol(">> ");
 
     frame.render_stateful_widget(table, area, &mut app.table_state);

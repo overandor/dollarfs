@@ -221,3 +221,30 @@ pub async fn detect_secrets_llm(client: &LlmClient, content: &str) -> Result<Str
     let user = format!("Text:\n{}", &content[..content.len().min(4000)]);
     client.chat(system, &user).await
 }
+
+/// Analyze repository for collateralization potential
+pub async fn analyze_collateral_potential(client: &LlmClient, repo_path: &str, metadata: &str) -> Result<String> {
+    let system = "You are a digital asset collateralization expert. Analyze the repository metadata and provide:
+1. Collateral suitability score (0.0-1.0)
+2. Key collateral strengths (3-5 bullet points)
+3. Risk factors for collateralization (2-3 bullet points)
+4. Recommended collateral ratio percentage
+
+Respond in JSON format with keys: suitability_score, strengths, risks, recommended_ratio.";
+    let user = format!("Repository Analysis for Collateralization:\nPath: {}\n\nMetadata:\n{}", repo_path, metadata);
+    client.chat(system, &user).await
+}
+
+/// Generate Merkle tree verification report with LLM insights
+pub async fn generate_merkle_verification_report(client: &LlmClient, repo_name: &str, file_count: i64, total_hash: &str) -> Result<String> {
+    let system = "You are a cryptographic verification analyst. Generate a verification report for the Merkle tree data. Include: verification status, integrity assessment, confidence level, and any recommendations.";
+    let user = format!("Repository: {}\nFile Count: {}\nTotal Hash: {}\n\nGenerate verification report.", repo_name, file_count, total_hash);
+    client.chat(system, &user).await
+}
+
+/// Analyze asset liquidity and marketability
+pub async fn analyze_asset_liquidity(client: &LlmClient, asset_description: &str) -> Result<String> {
+    let system = "You are a software project analyst. Assess the reusability and transferability of the described software project. Provide: reusability score (0-100), demand assessment, transfer difficulty estimate, and recommendations for improving reusability.";
+    let user = format!("Project Description:\n{}\n\nProvide reusability analysis.", asset_description);
+    client.chat(system, &user).await
+}

@@ -4,7 +4,7 @@ mod tui;
 use anyhow::Result;
 use chrono::Local;
 use clap::{Parser, Subcommand};
-use dfs_core::{scanner, DollarFs, default_watched_dirs};
+use dfs_core::{scanner, DollarFs, default_watched_dirs, llm::analyze_collateral_potential, llm::generate_merkle_verification_report, llm::analyze_asset_liquidity};
 use dfs_security::{redact_preview, scan_directory};
 use dfs_valuation::{day_ledger, top_files, value_all_files, value_directory, value_file, ValuationConfig};
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use tracing::{info, warn};
 #[derive(Parser)]
 #[command(name = "lfv")]
 #[command(about = "lfv — local-first macOS file-value terminal")]
-#[command(version = "0.3.0")]
+#[command(version = "0.4.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -103,6 +103,25 @@ enum Commands {
     },
     /// Run diagnostics
     Doctor,
+    /// Analyze repository for collateralization potential
+    CollateralAnalyze {
+        #[arg(help = "Repository path to analyze")]
+        path: PathBuf,
+    },
+    /// Generate Merkle verification report with LLM
+    MerkleReport {
+        #[arg(help = "Repository name")]
+        repo_name: String,
+        #[arg(help = "File count")]
+        file_count: i64,
+        #[arg(help = "Total hash")]
+        total_hash: String,
+    },
+    /// Analyze asset liquidity
+    LiquidityAnalyze {
+        #[arg(help = "Asset description")]
+        description: String,
+    },
 }
 
 #[tokio::main]
@@ -135,11 +154,14 @@ async fn main() -> Result<()> {
         Commands::Status => cmd_status(cli.config).await,
         Commands::Dashboard { port } => cmd_dashboard(cli.config, port).await,
         Commands::Doctor => cmd_doctor(cli.config).await,
+        Commands::CollateralAnalyze { path } => cmd_collateral_analyze(cli.config, &path).await,
+        Commands::MerkleReport { repo_name, file_count, total_hash } => cmd_merkle_report(cli.config, &repo_name, file_count, &total_hash).await,
+        Commands::LiquidityAnalyze { description } => cmd_liquidity_analyze(cli.config, &description).await,
     }
 }
 
 async fn cmd_init(config: Option<PathBuf>) -> Result<()> {
-    println!("lfv v0.3.0 — Initializing...");
+    println!("lfv v0.4.0 — Initializing...");
     let dfs = DollarFs::init(config)?;
     println!("  Config directory: {}", dfs.config_dir.display());
     println!("  Database: {}", dfs.db_path.display());
@@ -622,7 +644,7 @@ async fn cmd_status(config: Option<PathBuf>) -> Result<()> {
     println!("  Files:        {}", file_count);
     println!("  Book value:   ${:.2}", total_value);
     println!("  Securities:   {}", sec_count);
-    println!("  Version:      0.3.0");
+    println!("  Version:      0.4.0");
     Ok(())
 }
 
@@ -651,6 +673,102 @@ async fn cmd_doctor(config: Option<PathBuf>) -> Result<()> {
     println!("  [INFO] Config entries: {}", settings);
 
     println!("\nDiagnostics complete.");
+    Ok(())
+}
+
+async fn cmd_collateral_analyze(config: Option<PathBuf>, path: &PathBuf) -> Result<()> {
+    let dfs = DollarFs::init(config)?;
+    let conn = dfs.open_db()?;
+    let llm_config = dfs_core::llm::LlmConfig::load_from_db(&conn)?;
+    
+    if !llm_config.enabled {
+        println!("LLM is disabled. Enable with `lfv llm-config --enable`.");
+        return Ok(());
+    }
+    
+    let client = dfs_core::llm::LlmClient::new(llm_config)?;
+    let path_str = path.to_string_lossy().to_string();
+    
+    // Gather metadata about the repository
+    let metadata = format!(
+        "Path: {}\nExists: {}\nIs Directory: {}",
+        path_str,
+        path.exists(),
+        path.is_dir()
+    );
+    
+    println!("lfv COLLATERAL ANALYSIS — {}", path_str);
+    print!("  Analyzing collateral potential... ");
+    
+    match analyze_collateral_potential(&client, &path_str, &metadata).await {
+        Ok(analysis) => {
+            println!("done");
+            println!("  Analysis Result:");
+            println!("    {}", analysis);
+        }
+        Err(e) => {
+            println!("failed: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+
+async fn cmd_merkle_report(config: Option<PathBuf>, repo_name: &str, file_count: i64, total_hash: &str) -> Result<()> {
+    let dfs = DollarFs::init(config)?;
+    let conn = dfs.open_db()?;
+    let llm_config = dfs_core::llm::LlmConfig::load_from_db(&conn)?;
+    
+    if !llm_config.enabled {
+        println!("LLM is disabled. Enable with `lfv llm-config --enable`.");
+        return Ok(());
+    }
+    
+    let client = dfs_core::llm::LlmClient::new(llm_config)?;
+    
+    println!("lfv MERKLE VERIFICATION REPORT — {}", repo_name);
+    print!("  Generating report... ");
+    
+    match generate_merkle_verification_report(&client, repo_name, file_count, total_hash).await {
+        Ok(report) => {
+            println!("done");
+            println!("  Verification Report:");
+            println!("    {}", report);
+        }
+        Err(e) => {
+            println!("failed: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+
+async fn cmd_liquidity_analyze(config: Option<PathBuf>, description: &str) -> Result<()> {
+    let dfs = DollarFs::init(config)?;
+    let conn = dfs.open_db()?;
+    let llm_config = dfs_core::llm::LlmConfig::load_from_db(&conn)?;
+    
+    if !llm_config.enabled {
+        println!("LLM is disabled. Enable with `lfv llm-config --enable`.");
+        return Ok(());
+    }
+    
+    let client = dfs_core::llm::LlmClient::new(llm_config)?;
+    
+    println!("lfv ASSET LIQUIDITY ANALYSIS");
+    print!("  Analyzing liquidity... ");
+    
+    match analyze_asset_liquidity(&client, description).await {
+        Ok(analysis) => {
+            println!("done");
+            println!("  Liquidity Analysis:");
+            println!("    {}", analysis);
+        }
+        Err(e) => {
+            println!("failed: {}", e);
+        }
+    }
+    
     Ok(())
 }
 

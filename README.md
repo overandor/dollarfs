@@ -40,7 +40,7 @@ lfv doctor                       # Run diagnostics
 
 ## Installation
 
-Requires Rust 1.75+ and macOS.
+Requires Rust 1.83+ and macOS.
 
 ```bash
 cd local-file-value-system
