@@ -5,6 +5,14 @@ use std::io::Read;
 use std::path::Path;
 use walkdir::WalkDir;
 
+/// Maximum file size to index (1 GB). Files larger than this are skipped
+/// to prevent DoS from arbitrarily large inputs.
+pub const MAX_FILE_SIZE_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Threshold for flagging a file as potentially sparse.
+/// If allocated blocks * 512 < logical_size * 0.5, the file is flagged sparse.
+const SPARSE_THRESHOLD_RATIO: f64 = 0.5;
+
 pub const DEFAULT_WATCHED: &[&str] = &[
     "Desktop",
     "Documents",
@@ -46,6 +54,35 @@ pub const DEFAULT_EXCLUDED: &[&str] = &[
     ".idea",
     ".vscode",
     "Thumbs.db",
+    // Generated / vendor / binary artifacts that must never carry collateral value
+    "vendor",
+    "third_party",
+    "third-party",
+    "gen",
+    "generated",
+    "out",
+    "output",
+    "bin",
+    "obj",
+    "Debug",
+    "Release",
+    "x64",
+    "x86",
+    "artifacts",
+    "packages",
+    "Pods",
+    "Carthage",
+    "*.lock",
+    "*.sum",
+    "go.sum",
+    "Cargo.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Podfile.lock",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
 ];
 
 pub fn is_excluded(path: &Path, excluded: &[&str]) -> bool {
@@ -70,18 +107,62 @@ pub fn is_excluded(path: &Path, excluded: &[&str]) -> bool {
     false
 }
 
-fn blake3_file(path: &Path) -> Result<String> {
+/// Compute BLAKE3 hash and Shannon entropy in a single streaming pass.
+/// Returns (hash_hex, entropy_bits, is_sparse).
+fn blake3_file(path: &Path) -> Result<(String, f64, bool)> {
+    let metadata = std::fs::metadata(path)?;
+    let logical_size = metadata.len();
+
+    // Sparse-file detection (Unix-specific; falls back to false on non-Unix)
+    #[cfg(unix)]
+    let is_sparse = {
+        use std::os::unix::fs::MetadataExt;
+        let blk_size = metadata.blksize().max(512);
+        let allocated = metadata.blocks() * blk_size as u64;
+        if logical_size > 0 {
+            (allocated as f64 / logical_size as f64) < SPARSE_THRESHOLD_RATIO
+        } else {
+            false
+        }
+    };
+    #[cfg(not(unix))]
+    let is_sparse = false;
+
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Hasher::new();
     let mut buf = [0u8; 1024 * 1024];
+
+    // Entropy counters: count byte frequencies in windows to avoid
+    // unbounded memory. We sample every chunk.
+    let mut byte_counts: [u64; 256] = [0; 256];
+    let mut total_bytes: u64 = 0;
+
     loop {
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
+        for &b in &buf[..n] {
+            byte_counts[b as usize] += 1;
+        }
+        total_bytes += n as u64;
     }
-    Ok(hasher.finalize().to_hex().to_string())
+
+    let entropy = if total_bytes == 0 {
+        0.0
+    } else {
+        let mut h = 0.0f64;
+        for &c in &byte_counts {
+            if c > 0 {
+                let p = c as f64 / total_bytes as f64;
+                h -= p * p.log2();
+            }
+        }
+        h
+    };
+
+    Ok((hasher.finalize().to_hex().to_string(), entropy, is_sparse))
 }
 
 pub fn scan_path(conn: &mut Connection, root: &Path) -> Result<usize> {
@@ -121,7 +202,13 @@ pub fn scan_path_incremental(
 
         match index_file(&tx, path) {
             Ok(_) => count += 1,
-            Err(e) => eprintln!("warn: failed to index {}: {}", path.display(), e),
+            Err(e) => {
+                if e.to_string().contains("exceeds max") {
+                    eprintln!("skip: {} (size exceeds max)", path.display());
+                } else {
+                    eprintln!("warn: failed to index {}: {}", path.display(), e);
+                }
+            }
         }
     }
 
@@ -192,7 +279,10 @@ pub fn detect_duplicates(conn: &mut Connection) -> Result<usize> {
 pub fn index_file(tx: &rusqlite::Transaction, path: &Path) -> Result<()> {
     let metadata = std::fs::metadata(path)?;
     let size = metadata.len() as i64;
-    let hash = blake3_file(path)?;
+    if metadata.len() > MAX_FILE_SIZE_BYTES {
+        anyhow::bail!("file size {} exceeds max {}", metadata.len(), MAX_FILE_SIZE_BYTES);
+    }
+    let (hash, entropy, is_sparse) = blake3_file(path)?;
 
     let extension = path
         .extension()
@@ -240,14 +330,17 @@ pub fn index_file(tx: &rusqlite::Transaction, path: &Path) -> Result<()> {
     tx.execute(
         r#"INSERT INTO files (
             path, canonical_path, content_hash, size, extension, mime_guess,
-            created_at, modified_at, indexed_at, last_seen_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            created_at, modified_at, indexed_at, last_seen_at,
+            entropy, is_sparse
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ON CONFLICT(path) DO UPDATE SET
             content_hash = excluded.content_hash,
             size = excluded.size,
             modified_at = excluded.modified_at,
             last_seen_at = excluded.last_seen_at,
-            deleted_at = NULL
+            deleted_at = NULL,
+            entropy = excluded.entropy,
+            is_sparse = excluded.is_sparse
         "#,
         params![
             path_str,
@@ -260,6 +353,8 @@ pub fn index_file(tx: &rusqlite::Transaction, path: &Path) -> Result<()> {
             modified,
             now,
             now,
+            entropy,
+            is_sparse,
         ],
     )?;
 

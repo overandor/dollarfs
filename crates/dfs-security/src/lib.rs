@@ -1,6 +1,10 @@
 use anyhow::Result;
 use regex::Regex;
 use rusqlite::params;
+use std::io::{BufRead, BufReader};
+
+/// Maximum file size to scan for secrets (100 MB) to prevent memory exhaustion.
+const MAX_SCAN_SIZE: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SecretPattern {
@@ -81,12 +85,35 @@ pub fn scan_file(
     path: &str,
     patterns: &[SecretPattern],
 ) -> Result<Vec<SecretFinding>> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
         Err(_) => return Ok(Vec::new()),
     };
+    if metadata.len() > MAX_SCAN_SIZE {
+        eprintln!("warn: security scan skipped {} ({} bytes > max {})", path, metadata.len(), MAX_SCAN_SIZE);
+        return Ok(Vec::new());
+    }
 
-    let raw_findings = scan_text(&content, patterns);
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let reader = BufReader::new(file);
+    let mut raw_findings = Vec::new();
+    for (line_no, line) in reader.lines().flatten().enumerate() {
+        for pat in patterns {
+            if let Some(m) = pat.regex.find(&line) {
+                let raw = m.as_str().to_string();
+                raw_findings.push((
+                    pat.name.to_string(),
+                    line_no + 1,
+                    pat.severity.to_string(),
+                    redact_preview(&raw),
+                    fingerprint_secret(&raw),
+                ));
+            }
+        }
+    }
     let mut findings = Vec::new();
 
     for (finding_type, line_number, severity, preview, fingerprint) in raw_findings {
@@ -156,17 +183,27 @@ pub fn scan_directory_raw(dir: &std::path::Path) -> Result<Vec<SecretFinding>> {
     let mut all_findings: Vec<SecretFinding> = Vec::new();
 
     walk_dir(dir, &mut |path| {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            let raw = scan_text(&content, &patterns);
-            for (finding_type, line_number, severity, preview, fingerprint) in raw {
-                all_findings.push(SecretFinding {
-                    path: path.to_string_lossy().to_string(),
-                    finding_type,
-                    line_number,
-                    severity,
-                    preview,
-                    fingerprint,
-                });
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if metadata.len() > MAX_SCAN_SIZE {
+                return;
+            }
+        }
+        if let Ok(file) = std::fs::File::open(path) {
+            let reader = BufReader::new(file);
+            for (line_no, line) in reader.lines().flatten().enumerate() {
+                for pat in &patterns {
+                    if let Some(m) = pat.regex.find(&line) {
+                        let raw = m.as_str().to_string();
+                        all_findings.push(SecretFinding {
+                            path: path.to_string_lossy().to_string(),
+                            finding_type: pat.name.to_string(),
+                            line_number: line_no + 1,
+                            severity: pat.severity.to_string(),
+                            preview: redact_preview(&raw),
+                            fingerprint: fingerprint_secret(&raw),
+                        });
+                    }
+                }
             }
         }
     });

@@ -461,6 +461,7 @@ name = "dfs-security"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "regex",
  "rusqlite",
  "tracing",

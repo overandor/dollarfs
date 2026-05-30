@@ -19,6 +19,8 @@ pub struct FileRecord {
     pub duplicate_group_id: Option<i64>,
     pub project_id: Option<i64>,
     pub asset_id: Option<String>,
+    pub entropy: f64,
+    pub is_sparse: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +35,8 @@ pub struct Valuation {
     pub valuation_confidence: Option<f64>,
     pub last_valued_at: f64,
     pub valuation_reason: Option<String>,
+    pub schema_version: Option<String>,
+    pub is_legacy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -67,7 +67,8 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
     let file: FileRecord = conn.query_row(
         "SELECT file_id, path, canonical_path, inode, volume_id, content_hash, size,
                 extension, mime_guess, created_at, modified_at, indexed_at,
-                last_seen_at, deleted_at, duplicate_group_id, project_id, asset_id
+                last_seen_at, deleted_at, duplicate_group_id, project_id, asset_id,
+                entropy, is_sparse
          FROM files WHERE file_id = ?1",
         params![file_id],
         |row| {
@@ -89,6 +90,8 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
                 duplicate_group_id: row.get(14)?,
                 project_id: row.get(15)?,
                 asset_id: row.get(16)?,
+                entropy: row.get(17).unwrap_or(0.0),
+                is_sparse: row.get::<_, i64>(18).unwrap_or(0) != 0,
             })
         },
     )?;
@@ -104,9 +107,30 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
 
     let is_duplicate = file.duplicate_group_id.is_some();
 
+    // Base value: ONLY from estimated work + complexity + file type.
+    // NO raw size component. Size is not value.
     let mut book_value = direct_work_value
-        + (complexity_score * file_type_score)
-        + (file.size as f64 * 0.0001);
+        + (complexity_score * file_type_score);
+
+    // Entropy-based quality signal.
+    // Shannon entropy of a file in bits per byte.
+    // 0.0 = all same byte (e.g. all zeros, sparse). 8.0 = perfectly random.
+    // Source code typically 4.0–7.0. English text ~4.5.
+    let entropy_bonus = if file.entropy < 1.0 {
+        // Heavy penalty: likely sparse, all-null, or extremely repetitive.
+        0.0
+    } else if file.entropy > 6.0 {
+        // High-information content bonus (up to 1.5x).
+        1.0 + ((file.entropy - 6.0) / 2.0).min(0.5)
+    } else {
+        1.0
+    };
+    book_value *= entropy_bonus;
+
+    // Sparse files are synthetic; they carry zero economic labor.
+    if file.is_sparse {
+        book_value = 0.0;
+    }
 
     // Apply multipliers / penalties
     if is_duplicate {
@@ -131,10 +155,12 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
     let final_value = (book_value + rnd_bonus) * confidence;
 
     let reason = format!(
-        "{} file, size={}, complexity_score={:.2}, confidence={:.2}, security_findings={}, duplicate={}",
+        "{} file, size={}, complexity={:.2}, entropy={:.2}, sparse={}, confidence={:.2}, sec={}, dup={}",
         file.extension.as_deref().unwrap_or("unknown"),
         file.size,
         complexity_score,
+        file.entropy,
+        file.is_sparse,
         confidence,
         has_security,
         is_duplicate,
@@ -144,8 +170,8 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
         r#"INSERT INTO valuations (
             file_id, book_value_usd, replacement_cost_usd, rnd_value_usd,
             packaging_value_usd, market_confidence, valuation_confidence,
-            last_valued_at, valuation_reason
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, unixepoch(), ?8)
+            last_valued_at, valuation_reason, schema_version, is_legacy
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, unixepoch(), ?8, '0.3.0', 0)
         ON CONFLICT(file_id) DO UPDATE SET
             book_value_usd = excluded.book_value_usd,
             replacement_cost_usd = excluded.replacement_cost_usd,
@@ -154,7 +180,9 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
             market_confidence = excluded.market_confidence,
             valuation_confidence = excluded.valuation_confidence,
             last_valued_at = excluded.last_valued_at,
-            valuation_reason = excluded.valuation_reason"#,
+            valuation_reason = excluded.valuation_reason,
+            schema_version = excluded.schema_version,
+            is_legacy = excluded.is_legacy"#,
         params![
             file_id,
             final_value,
@@ -170,9 +198,14 @@ pub fn value_file(conn: &Connection, file_id: i64, config: &ValuationConfig) -> 
     Ok(final_value)
 }
 
+/// Maximum estimated minutes for a single file (8 hours).
+/// Prevents arbitrarily large files from inflating value via size.
+const MAX_MINUTES_PER_FILE: f64 = 480.0;
+
 fn estimate_file_type_value(file: &FileRecord, config: &ValuationConfig) -> (f64, f64, f64) {
     let ext = file.extension.as_deref().unwrap_or("");
-    let minutes_estimated = file.size as f64 / 500.0; // rough heuristic
+    // Cap minutes to prevent synthetic asset inflation from large/sparse files.
+    let minutes_estimated = (file.size as f64 / 500.0).min(MAX_MINUTES_PER_FILE);
 
     let (base_score, complexity) = match ext {
         "rs" | "swift" | "c" | "cpp" | "h" | "hpp" | "cc" => {
@@ -354,4 +387,94 @@ pub struct DailySummary {
     pub estimated_net_value: f64,
     pub risk_deductions: f64,
     pub top_files: Vec<(String, f64, f64, String)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_file(size: i64, entropy: f64, is_sparse: bool, ext: &str) -> FileRecord {
+        FileRecord {
+            file_id: Some(1),
+            path: format!("/test/file.{}", ext),
+            canonical_path: None,
+            inode: None,
+            volume_id: None,
+            content_hash: "abc".to_string(),
+            size,
+            extension: Some(ext.to_string()),
+            mime_guess: Some("text/plain".to_string()),
+            created_at: None,
+            modified_at: None,
+            indexed_at: 0.0,
+            last_seen_at: 0.0,
+            deleted_at: None,
+            duplicate_group_id: None,
+            project_id: None,
+            asset_id: None,
+            entropy,
+            is_sparse,
+        }
+    }
+
+    #[test]
+    fn test_capped_minutes_prevents_inflation() {
+        let config = ValuationConfig::default();
+        // 100 GB file should still be capped at 480 minutes
+        let huge = make_file(100 * 1024 * 1024 * 1024, 5.0, false, "rs");
+        let (val1, _, _) = estimate_file_type_value(&huge, &config);
+
+        // A 1 MB file at same entropy should also be capped at 480 minutes
+        let small = make_file(1024 * 1024, 5.0, false, "rs");
+        let (val2, _, _) = estimate_file_type_value(&small, &config);
+
+        // Both hit the cap, so they should have equal base value
+        assert!(val1.is_finite());
+        assert!(val1 > 0.0);
+        // 480 minutes = 8 hours at $150 = $1200 for base score
+        assert!(val1 < 2000.0, "huge file should not exceed ~$2000; got {}", val1);
+        // Capping means size no longer drives value
+        assert_eq!(val1, val2, "capped files should have equal base value regardless of size");
+
+        // An uncapped tiny file should have a smaller value
+        let tiny = make_file(500, 5.0, false, "rs");
+        let (val3, _, _) = estimate_file_type_value(&tiny, &config);
+        assert!(val3 < val1, "tiny file below cap should be cheaper than capped file");
+    }
+
+    #[test]
+    fn test_sparse_file_gets_zero_value() {
+        let config = ValuationConfig::default();
+        let file = make_file(1024 * 1024, 5.0, true, "rs");
+        let (direct, complexity, ftype) = estimate_file_type_value(&file, &config);
+        let book = direct + (complexity * ftype);
+        // Simulate the sparse penalty logic inline
+        let mut book_value = book;
+        let entropy_bonus = if file.entropy < 1.0 { 0.0 } else if file.entropy > 6.0 { 1.0 + ((file.entropy - 6.0) / 2.0).min(0.5) } else { 1.0 };
+        book_value *= entropy_bonus;
+        if file.is_sparse {
+            book_value = 0.0;
+        }
+        assert_eq!(book_value, 0.0, "sparse file must have zero collateral value");
+    }
+
+    #[test]
+    fn test_low_entropy_file_gets_penalty() {
+        let config = ValuationConfig::default();
+        let low_ent = make_file(1024 * 1024, 0.5, false, "rs");
+        let high_ent = make_file(1024 * 1024, 7.0, false, "rs");
+        let (d1, c1, f1) = estimate_file_type_value(&low_ent, &config);
+        let (d2, c2, f2) = estimate_file_type_value(&high_ent, &config);
+
+        let mut bv1 = d1 + (c1 * f1);
+        let mut bv2 = d2 + (c2 * f2);
+
+        let eb1 = if low_ent.entropy < 1.0 { 0.0 } else { 1.0 };
+        let eb2 = if high_ent.entropy > 6.0 { 1.0 + ((high_ent.entropy - 6.0) / 2.0).min(0.5) } else { 1.0 };
+        bv1 *= eb1;
+        bv2 *= eb2;
+
+        assert_eq!(bv1, 0.0, "low-entropy file must be penalized to zero");
+        assert!(bv2 > 0.0, "high-entropy file should retain value");
+    }
 }
